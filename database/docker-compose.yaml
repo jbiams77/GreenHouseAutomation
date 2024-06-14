@@ -1,0 +1,52 @@
+version: "3.4"
+
+services:
+  database:
+    image: postgres:15.3-bullseye
+    hostname: database
+    container_name: database
+    restart: always
+    ports:
+      - target: 5432
+        published: 20201
+        protocol: tcp
+        mode: host
+    env_file:
+      - db_api.env
+    networks:
+      docker_local_net:
+        ipv4_address: 182.29.1.3
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U local -d local" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  database_dashboard:
+    container_name: database_dashboard
+    restart: always
+    image: dpage/pgadmin4
+    env_file:
+      - db_api.env
+    ports:
+      - "20210:80"
+    volumes:
+      - "./servers.json:/servers.json"
+    networks:
+      docker_local_net:
+        ipv4_address: 182.29.1.2
+    depends_on:
+      database:
+        condition: service_healthy
+
+networks:
+  docker_local_net:
+    ipam:
+      driver: default
+      config:
+        - subnet: 182.29.0.0/16
+
+volumes:
+  pgdata:

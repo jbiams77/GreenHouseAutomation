@@ -1,12 +1,16 @@
+import asyncio
 import time
+from typing import List
 import board
 import logging
 import datetime
 import digitalio
 import adafruit_dht
-import db_globals as db
+import database.db_globals as db
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from services.devices.relay import RelayController
+
 
 # Configure logging to output to STDOUT
 logging.basicConfig(level=logging.INFO)
@@ -26,22 +30,22 @@ dht_pin_2 = board.D22
 dht_sensor_1 = adafruit_dht.DHT22(dht_pin_1)
 dht_sensor_2 = adafruit_dht.DHT22(dht_pin_2)
 
-# light relay pin
-light = digitalio.DigitalInOut(board.D20)
-light.direction = digitalio.Direction.OUTPUT
-light.value = False
-
 # fan relay pin
 fan = digitalio.DigitalInOut(board.D16)
 fan.direction = digitalio.Direction.OUTPUT
 fan.value = False
 fan_threshold = 75.0
 
-time_on = datetime.time(hour=6, minute=0, second=0)
-time_off = datetime.time(hour=22, minute=0, second=0)
+
+async def scheduler_service(devices: List[RelayController]):
+    tasks = []
+    for device in devices:
+        task = asyncio.create_task(device.run())
+        tasks.append(task)
+    await asyncio.gather(*tasks)
 
 
-def get_readings():
+async def get_readings():
     try:
         while True:
             # Attempt to read the temperature and humidity from the sensor
@@ -51,18 +55,15 @@ def get_readings():
             outside_temperature = ( dht_sensor_1.temperature * (9.0 / 5.0)) + 32
             outside_humidity = dht_sensor_1.humidity
 
-            time_now =datetime.datetime.now().time()
-            light.value = time_now < time_off and time_now > time_on
-            fan.value = inside_temperature > fan_threshold
-
             new_data = db.SensorData(
                 timestamp=datetime.datetime.now(),
                 inside_temperature=inside_temperature,
                 inside_humidity=inside_humidity,
                 outside_temperature=outside_temperature,
                 outside_humidity=outside_humidity,
-                light=light.value,
-                fan=fan.value
+                light=0.0,
+                water_in_temperature=0.0,
+                water_out_temperature=0.0
             )
 
             # Add the new record to the session
@@ -76,12 +77,22 @@ def get_readings():
             LOGGER.info("Ouside Temperature: {:.1f}°F, Humidity: {:.1f}%".format(outside_temperature, outside_humidity))
 
             # Wait for a few seconds before reading again
-            time.sleep(30)
+            await asyncio.sleep(30)
     except RuntimeError as error:
         LOGGER.warning(f'ERROR: {error}')
-        time.sleep(2.0)
-        get_readings()
+        await asyncio.sleep(2.0)
+        await get_readings()
     except KeyboardInterrupt:
         LOGGER.info("Exiting...")
 
-get_readings()
+
+async def main(devices: list):
+    readings = asyncio.create_task(get_readings())
+    scheduler = asyncio.create_task(scheduler_service(devices))
+    await asyncio.gather(readings, scheduler)
+
+    await asyncio.gather(readings)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
